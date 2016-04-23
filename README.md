@@ -1,7 +1,7 @@
 # gogoo 
 
-[![GoDoc](https://godoc.org/github.com/browny/gogoo?status.svg)](http://godoc.org/github.com/browny/gogoo)
-[![Travis Build Status](https://travis-ci.org/browny/gogoo.svg?branch=master)](https://travis-ci.org/browny/gogoo)
+[![GoDoc](https://godoc.org/github.com/iKala/gogoo?status.svg)](http://godoc.org/github.com/iKala/gogoo)
+[![Travis Build Status](https://travis-ci.org/iKala/gogoo.svg?branch=master)](https://travis-ci.org/iKala/gogoo)
 
 **gogoo** encapsulates [google cloud api](https://godoc.org/google.golang.org/api) for more specific operation logic. Below are
 the including components
@@ -27,7 +27,7 @@ go get github.com/iKala/gogoo
 
 ```sh
 cd $GOPATH/src
-git clone git@github.com:browny/gogoo.git github.com/browny/gogoo
+git clone git@github.com:iKala/gogoo.git github.com/iKala/gogoo
 ```
 
 - You should setup one google cloud project, and create a [service account](https://developers.google.com/identity/protocols/OAuth2ServiceAccount)

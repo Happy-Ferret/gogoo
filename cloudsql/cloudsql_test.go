@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/browny/gogoo/config"
 	"github.com/facebookgo/inject"
+	"github.com/iKala/gogoo/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/api/sqladmin/v1beta4"

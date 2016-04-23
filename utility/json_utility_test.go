@@ -4,7 +4,7 @@ import (
 	"log"
 	"testing"
 
-	. "github.com/browny/gogoo/utility"
+	. "github.com/iKala/gogoo/utility"
 )
 
 func TestJSONStringToMap(t *testing.T) {

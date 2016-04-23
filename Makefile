@@ -7,7 +7,7 @@ asset:
 install: asset
 	go install ./...
 
-test:
+test: asset
 	go test ./config
 	go test ./gce
 	go test ./gcm

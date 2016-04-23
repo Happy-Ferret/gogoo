@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/browny/gogoo/config"
-	"github.com/browny/gogoo/utility"
 	"github.com/facebookgo/inject"
+	"github.com/iKala/gogoo/config"
+	"github.com/iKala/gogoo/utility"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 	"google.golang.org/api/compute/v1"
