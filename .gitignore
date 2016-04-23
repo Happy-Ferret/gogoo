@@ -1,0 +1,6 @@
+*.gz
+*.pem
+tags
+config/asset.go
+config/config.json
+config/instance_template.json
