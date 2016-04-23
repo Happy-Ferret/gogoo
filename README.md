@@ -18,7 +18,7 @@ the including components
 ## Install
 
 ```bash
-go get github.com/browny/gogoo
+go get github.com/iKala/gogoo
 ```
 
 ## Develop
