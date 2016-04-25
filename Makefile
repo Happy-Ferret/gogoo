@@ -1,13 +1,14 @@
 .PHONY: asset deps install test
+.DEFAULT_GOAL := help
 
-asset:
+asset: ## Rebuild the asset files (config, template, secrect, etc...)
 	rm -rf config/asset.go
 	esc -o config/asset.go -pkg config config/
 
-install: asset
+install: asset ## Install the app
 	go install ./...
 
-test: asset
+test: asset ## Run all test
 	go test ./config
 	go test ./gce
 	go test ./gcm
@@ -16,7 +17,7 @@ test: asset
 	go test ./storage
 	go test ./utility
 
-deps:
+deps: ## Install all dependencies
 	go get github.com/cihub/seelog
 	go get github.com/facebookgo/inject
 	go get github.com/mjibson/esc
@@ -37,3 +38,6 @@ deps:
 	go get github.com/stretchr/testify/suite
 	go get github.com/patrickmn/go-cache
 	go get github.com/satori/go.uuid
+
+help:
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'

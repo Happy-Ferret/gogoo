@@ -30,6 +30,8 @@ const (
 	VMStoppingTimeout = 180 * time.Second
 	// DiskCreationTimeout is timeout of disk creation
 	DiskCreationTimeout = 180 * time.Second
+	// VmSetMachineTypeTimeout is timeout of set machine type
+	VmSetMachineTypeTimeout = 180 * time.Second
 )
 
 // VMConditionChecker return a bool value by checking condition inside VM
@@ -154,15 +156,27 @@ func (m *Manager) StopVM(projectID, zone, vmName string, vcc VMConditionChecker)
 
 // SetMachineType changes the machine type for a stopped instance to the machine type specified in the request.
 // https://godoc.org/google.golang.org/api/compute/v1#InstancesService.SetMachineType
-func (m *Manager) SetMachineType(projectID, zone, vmName, machineType string) (*compute.Operation, error) {
+func (m *Manager) SetMachineType(projectId, zone, vmName, machineType string) error {
 	log.Debugf("SetMachineType: project[%s], zone[%s], vmName[%s], type[%s]",
-		projectID, zone, vmName, machineType)
+		projectId, zone, vmName, machineType)
 
 	instanceService := compute.NewInstancesService(m.Service)
-	machineTypeURI := fmt.Sprintf("zones/%s/machineTypes/%s", zone, machineType)
-	request := compute.InstancesSetMachineTypeRequest{MachineType: machineTypeURI}
+	machineTypeUri := fmt.Sprintf("zones/%s/machineTypes/%s", zone, machineType)
+	request := compute.InstancesSetMachineTypeRequest{MachineType: machineTypeUri}
 
-	return instanceService.SetMachineType(projectID, zone, vmName, &request).Do()
+	if _, err := instanceService.SetMachineType(projectId, zone, vmName, &request).Do(); err != nil {
+		return err
+	}
+
+	vmMachineTypeChangingObserver := make(chan bool)
+	go m.ProbeVmMachineTypeChanged(projectId, zone, vmName, machineType, vmMachineTypeChangingObserver)
+
+	done := <-vmMachineTypeChangingObserver
+	if !done {
+		return gceError(fmt.Sprintf("SetMachineType timeout: VM[%s]", vmName))
+	}
+
+	return nil
 }
 
 // ResetInstance resets a instance.
@@ -524,6 +538,45 @@ func (m *Manager) ProbeDiskCreation(projectID, zone, diskName string, observer c
 		}
 
 		log.Infof("Disk Created!: name[%s]", disk.Name)
+		observer <- true
+
+		break
+	}
+}
+
+// ProbeVmMachineTypeChanged probes if the machineType of VM has been changed
+func (m *Manager) ProbeVmMachineTypeChanged(
+	projectId, zone, vmName, machineType string, observer chan<- bool) {
+
+	startTime := time.Now()
+
+	for {
+		if time.Now().Sub(startTime) > VmSetMachineTypeTimeout {
+			log.Warnf("VM setMachineType Timeout: VM[%s]", vmName)
+			observer <- false
+
+			break
+		}
+
+		changedVm, err := m.GetVM(projectId, zone, vmName)
+
+		if err != nil {
+			log.Tracef("VM not yet Existed: VM[%s]", vmName)
+			time.Sleep(10 * time.Second)
+
+			continue
+		}
+
+		vmMachineType := utility.GetLastSplit(changedVm.MachineType, "/")
+		if vmMachineType != machineType {
+			log.Tracef("VM machineType not yet changed: current[%s], target[%s]", vmMachineType, machineType)
+			time.Sleep(10 * time.Second)
+
+			continue
+		}
+
+		log.Infof("VM machineType Changed!: VM[%s], machineType[%s]", vmName, vmMachineType)
+
 		observer <- true
 
 		break
