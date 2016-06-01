@@ -97,6 +97,21 @@ func (suite *GceManagerTestSuite) Test05_ListVMs() {
 	assert.NotNil(suite.T(), instanceList)
 }
 
+func (suite *GceManagerTestSuite) Test051_ListVMsWithFilter() {
+	instanceList, err := testedGceManager.ListVMsWithFilter(testedProjectID, testedZone, "name eq instance-.*")
+	if err != nil {
+		log.Println("err:%s", err)
+	}
+
+	// List all instances
+	for _, v := range instanceList.Items {
+		result, _ := json.MarshalIndent(v, "", "  ")
+		log.Println(string(result))
+	}
+
+	assert.NotNil(suite.T(), instanceList)
+}
+
 func (suite *GceManagerTestSuite) Test06_ListImages() {
 	imageList, _ := testedGceManager.ListImages(testedProjectID)
 

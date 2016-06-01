@@ -200,6 +200,22 @@ func (m *Manager) ListVMs(projectID, zone string) (*compute.InstanceList, error)
 	return res, nil
 }
 
+// ListVMsWithFilter lists VMs with filter.
+// https://godoc.org/google.golang.org/api/compute/v1#InstancesService.List
+func (m *Manager) ListVMsWithFilter(projectID, zone, filter string) (*compute.InstanceList, error) {
+	log.Tracef("List VMs with filter: project[%s], zone[%s], filter[%s]", projectID, zone, filter)
+
+	res, err := m.Service.Instances.List(projectID, zone).
+		Filter(filter).
+		Do()
+
+	if err != nil {
+		return nil, gceError(err.Error())
+	}
+
+	return res, nil
+}
+
 // ListImages lists all images.
 // https://godoc.org/google.golang.org/api/compute/v1#ImagesService.List
 func (m *Manager) ListImages(projectID string) (*compute.ImageList, error) {
