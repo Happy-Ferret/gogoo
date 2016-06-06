@@ -15,7 +15,6 @@ test: asset ## Run all test
 	go test ./gds
 	go test ./pubsub
 	go test ./storage
-	go test ./utility
 
 deps: ## Install all dependencies
 	go get github.com/cihub/seelog

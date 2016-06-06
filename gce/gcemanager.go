@@ -10,7 +10,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/iKala/gogoo/utility"
+	"github.com/iKala/gosak"
 
 	log "github.com/cihub/seelog"
 	"golang.org/x/oauth2"
@@ -32,6 +32,11 @@ const (
 	DiskCreationTimeout = 180 * time.Second
 	// VmSetMachineTypeTimeout is timeout of set machine type
 	VmSetMachineTypeTimeout = 180 * time.Second
+	// InstanceTemplateCreationTimeout is timeout of creating instance template
+	InstanceTemplateCreationTimeout = 180 * time.Second
+
+	VMStatusTerminated = "TERMINATED"
+	VMStatusRunning    = "RUNNING"
 )
 
 // VMConditionChecker return a bool value by checking condition inside VM
@@ -69,7 +74,7 @@ type Manager struct {
 }
 
 // NewVM creates a new VM.
-// This method block till the status of created VM is RUNNING
+// This method blocks till the status of created VM to be RUNNING
 // or will be timeout if it takes over `VMRunningTimeout`.
 // https://godoc.org/google.golang.org/api/compute/v1#InstancesService.Insert
 func (m *Manager) NewVM(projectID, zone string, vm *compute.Instance) error {
@@ -301,9 +306,9 @@ func (m *Manager) DeleteDisk(projectID, zone, diskName string) error {
 	return nil
 }
 
-// GetSnapshots gets all snapshots of the project.
+// ListSnapshots gets all snapshots of the project.
 // https://godoc.org/google.golang.org/api/compute/v1#SnapshotsService.List
-func (m *Manager) GetSnapshots(projectID string) ([]*compute.Snapshot, error) {
+func (m *Manager) ListSnapshots(projectID string) ([]*compute.Snapshot, error) {
 	log.Tracef("Get snapshots: project[%s]", projectID)
 
 	snapshotService := compute.NewSnapshotsService(m.Service)
@@ -335,9 +340,39 @@ func (m *Manager) GetSnapshot(projectID, snapshot string) (*compute.Snapshot, er
 	return result, nil
 }
 
-// adjustTags adjusts tags of VM.
+// GetLatestSnapshot gets latest snapshot with specified prefix in its name
+func (m *Manager) GetLatestSnapshot(prefix string, snapshots []*compute.Snapshot) (*compute.Snapshot, error) {
+	filteredSnapshots := []*compute.Snapshot{}
+	for _, snapshot := range snapshots {
+		if strings.Contains(snapshot.Name, prefix) {
+			filteredSnapshots = append(filteredSnapshots, snapshot)
+		}
+	}
+
+	sort.Sort(BySnapshotName(filteredSnapshots))
+	if len(filteredSnapshots) < 1 {
+		log.Warn("No snapshot found")
+		return nil, fmt.Errorf("No snapshot found")
+	}
+
+	result := filteredSnapshots[len(filteredSnapshots)-1]
+	log.Tracef("Latest snapshot found: name[%s]", result.Name)
+
+	return result, nil
+}
+
+// GetSnapshotOfDisk gets the snapshot name of the disk
+func (m *Manager) GetSnapshotOfDisk(disk *compute.Disk) string {
+	log.Tracef("Snapshot of the disk: snapshot[%s]", disk.SourceSnapshot)
+
+	arr := strings.Split(disk.SourceSnapshot, "/")
+
+	return arr[len(arr)-1]
+}
+
+// setTags adjusts tags of VM.
 // https://godoc.org/google.golang.org/api/compute/v1#InstancesService.SetTags
-func (m *Manager) adjustTags(
+func (m *Manager) setTags(
 	projectID, zone, vmName string, tags []string, newTagsGenerator func([]string, []string) []string) (
 	*compute.Operation, error) {
 
@@ -367,7 +402,7 @@ func (m *Manager) AttachTags(projectID, zone, vmName string, addedTags []string)
 		return src
 	}
 
-	return m.adjustTags(projectID, zone, vmName, addedTags, attacher)
+	return m.setTags(projectID, zone, vmName, addedTags, attacher)
 }
 
 // DetachTags detaches tags from VM.
@@ -377,7 +412,7 @@ func (m *Manager) DetachTags(projectID, zone, vmName string, removedTages []stri
 	detacher := func(src, remove []string) []string {
 		result := []string{}
 		for _, s := range src {
-			if utility.InStringSlice(remove, s) {
+			if gosak.InStringSlice(remove, s) {
 				continue
 			}
 			result = append(result, s)
@@ -385,7 +420,43 @@ func (m *Manager) DetachTags(projectID, zone, vmName string, removedTages []stri
 		return result
 	}
 
-	return m.adjustTags(projectID, zone, vmName, removedTages, detacher)
+	return m.setTags(projectID, zone, vmName, removedTages, detacher)
+}
+
+// GetInstanceGroup
+// https://godoc.org/google.golang.org/api/compute/v1#InstanceGroupsService.Get
+func (m *Manager) GetInstanceGroup(projectID, zone, instanceGroupName string) (
+	*compute.InstanceGroup, error) {
+
+	log.Tracef(
+		"GetInstanceGroup: project[%s], zone[%s], instanceGroupName[%s]",
+		projectID, zone, instanceGroupName)
+
+	srv := compute.NewInstanceGroupsService(m.Service)
+
+	return srv.Get(projectID, zone, instanceGroupName).Do()
+}
+
+// ListInstancesInInstanceGroup lists all instances under some instance group
+// https://godoc.org/google.golang.org/api/compute/v1#InstanceGroupsService.ListInstances
+func (m *Manager) ListInstancesInInstanceGroup(projectID, zone, instanceGroupName string) ([]string, error) {
+	log.Tracef(
+		"ListInstancesInInstanceGroup: project[%s], zone[%s], instanceGroupName[%s]",
+		projectID, zone, instanceGroupName)
+
+	srv := compute.NewInstanceGroupsService(m.Service)
+	result, err := srv.ListInstances(projectID, zone, instanceGroupName, nil).Do()
+	if err != nil {
+		return []string{}, err
+	}
+
+	instances := []string{}
+	for _, item := range result.Items {
+		arr := strings.Split(item.Instance, "/")
+		instances = append(instances, arr[len(arr)-1])
+	}
+
+	return instances, nil
 }
 
 // AddInstancesIntoInstanceGroup adds instances into some instance group
@@ -395,7 +466,7 @@ func (m *Manager) AddInstancesIntoInstanceGroup(
 	*compute.Operation, error) {
 
 	log.Tracef(
-		"AddInstancesIntoInstanceGroup: project[%s], region[%s], instanceGroupName[%s], instances[%s]",
+		"AddInstancesIntoInstanceGroup: project[%s], zone[%s], instanceGroupName[%s], instances[%s]",
 		projectID, zone, instanceGroupName, instances)
 
 	instanceGroupService := compute.NewInstanceGroupsService(m.Service)
@@ -415,25 +486,218 @@ func (m *Manager) AddInstancesIntoInstanceGroup(
 	return op, nil
 }
 
-// GetLatestSnapshot gets latest snapshot with specified prefix in its name
-func (m *Manager) GetLatestSnapshot(prefix string, snapshots []*compute.Snapshot) (*compute.Snapshot, error) {
-	filteredSnapshots := []*compute.Snapshot{}
-	for _, snapshot := range snapshots {
-		if strings.Contains(snapshot.Name, prefix) {
-			filteredSnapshots = append(filteredSnapshots, snapshot)
+// RemoveInstancesIntoInstanceGroup adds instances into some instance group
+// https://godoc.org/google.golang.org/api/compute/v1#InstanceGroupsService.RemoveInstances
+func (m *Manager) RemoveInstancesIntoInstanceGroup(
+	projectID, zone, instanceGroupName string, instances []string) (
+	*compute.Operation, error) {
+
+	log.Tracef(
+		"RemoveInstancesIntoInstanceGroup: project[%s], zone[%s], instanceGroupName[%s], instances[%s]",
+		projectID, zone, instanceGroupName, instances)
+
+	instanceGroupService := compute.NewInstanceGroupsService(m.Service)
+
+	instanceReferences := []*compute.InstanceReference{}
+	for _, instance := range instances {
+		instanceRef := compute.InstanceReference{Instance: instance}
+		instanceReferences = append(instanceReferences, &instanceRef)
+	}
+	request := compute.InstanceGroupsRemoveInstancesRequest{Instances: instanceReferences}
+
+	op, err := instanceGroupService.RemoveInstances(projectID, zone, instanceGroupName, &request).Do()
+	if err != nil {
+		return nil, gceError(err.Error())
+	}
+
+	return op, nil
+}
+
+// ListInstanceGroupsByZone lists all instance groups in specified zone with filter condition
+// https://godoc.org/google.golang.org/api/compute/v1#InstanceGroupsService.List
+func (m *Manager) ListInstanceGroupsByZone(projectID, zone string, isPrefix func(string) bool) []string {
+	log.Tracef(
+		"ListInstanceGroupsByZone: project[%s], zone[%s]", projectID, zone)
+
+	instanceGroupService := compute.NewInstanceGroupsService(m.Service)
+	instanceGroupList, err := instanceGroupService.List(projectID, zone).Do()
+	if err != nil {
+		log.Warnf("err: %s", err)
+		return []string{}
+	}
+
+	result := []string{}
+	for _, g := range instanceGroupList.Items {
+		if isPrefix(g.Name) {
+			result = append(result, g.Name)
 		}
 	}
 
-	sort.Sort(BySnapshotName(filteredSnapshots))
-	if len(filteredSnapshots) < 1 {
-		log.Warn("No snapshot found")
-		return nil, fmt.Errorf("No snapshot found")
+	return result
+}
+
+// GetTargetPool
+// https://godoc.org/google.golang.org/api/compute/v1#TargetPoolsService.Get
+func (m *Manager) GetTargetPool(projectID, region, targetPool string) (*compute.TargetPool, error) {
+	log.Tracef("GetTargetPool: project[%s], region[%s], targetPool[%s]",
+		projectID, region, targetPool)
+
+	srv := compute.NewTargetPoolsService(m.Service)
+	return srv.Get(projectID, region, targetPool).Do()
+}
+
+// AddInstancesIntoTargetPool adds instances into the target pool of load balancer
+// https://godoc.org/google.golang.org/api/compute/v1#TargetPoolsService.AddInstance
+func (m *Manager) AddInstancesIntoTargetPool(
+	projectID, region, targetPool string, instances []string) (*compute.Operation, error) {
+
+	log.Tracef("AddInstancesIntoTargetPool: project[%s], region[%s], targetPool[%s]",
+		projectID, region, targetPool)
+
+	srv := compute.NewTargetPoolsService(m.Service)
+
+	instanceReferences := []*compute.InstanceReference{}
+	for _, instance := range instances {
+		instanceRef := compute.InstanceReference{Instance: instance}
+		instanceReferences = append(instanceReferences, &instanceRef)
+	}
+	request := compute.TargetPoolsAddInstanceRequest{Instances: instanceReferences}
+
+	op, err := srv.AddInstance(projectID, region, targetPool, &request).Do()
+	if err != nil {
+		log.Warnf("Error: %s", err.Error())
+
+		return nil, gceError(err.Error())
 	}
 
-	result := filteredSnapshots[len(filteredSnapshots)-1]
-	log.Tracef("Latest snapshot found: name[%s]", result.Name)
+	return op, nil
+}
+
+// RemoveInstancesFromTargetPool removes instances from the target pool of load balancer
+// https://godoc.org/google.golang.org/api/compute/v1#TargetPoolsService.RemoveInstance
+func (m *Manager) RemoveInstancesFromTargetPool(
+	projectID, region, targetPool string, instances []string) (*compute.Operation, error) {
+
+	log.Tracef("RemoveInstancesFromTargetPool: project[%s], region[%s], targetPool[%s]",
+		projectID, region, targetPool)
+
+	srv := compute.NewTargetPoolsService(m.Service)
+
+	instanceReferences := []*compute.InstanceReference{}
+	for _, instance := range instances {
+		instanceRef := compute.InstanceReference{Instance: instance}
+		instanceReferences = append(instanceReferences, &instanceRef)
+	}
+	request := compute.TargetPoolsRemoveInstanceRequest{Instances: instanceReferences}
+
+	op, err := srv.RemoveInstance(projectID, region, targetPool, &request).Do()
+	if err != nil {
+		log.Warnf("Error: %s", err.Error())
+
+		return nil, gceError(err.Error())
+	}
+
+	return op, nil
+}
+
+// GetInstanceTemplate
+// https://godoc.org/google.golang.org/api/compute/v1#InstanceTemplatesService.Get
+func (m *Manager) GetInstanceTemplate(projectID, templateName string) (*compute.InstanceTemplate, error) {
+	instanceTemplateService := compute.NewInstanceTemplatesService(m.Service)
+
+	return instanceTemplateService.Get(projectID, templateName).Do()
+}
+
+// NewInstanceTemplate
+// https://godoc.org/google.golang.org/api/compute/v1#InstanceTemplatesService.Insert
+func (m *Manager) NewInstanceTemplate(projectID string, template *compute.InstanceTemplate) error {
+	instanceTemplateService := compute.NewInstanceTemplatesService(m.Service)
+
+	if _, err := instanceTemplateService.Insert(projectID, template).Do(); err != nil {
+		log.Warnf("Fail to unmarshal template: error[%s]", err.Error())
+		return err
+	}
+
+	instanceTemplateCreationObserver := make(chan bool)
+	go m.ProbeInstanceTemplateCreation(projectID, template.Name, instanceTemplateCreationObserver)
+
+	done := <-instanceTemplateCreationObserver
+	if !done {
+		return fmt.Errorf("Timeout new instance template[%s]", template.Name)
+	}
+
+	return nil
+}
+
+// DeleteInstanceTemplate
+// https://godoc.org/google.golang.org/api/compute/v1#InstanceTemplatesService.Delete
+func (m *Manager) DeleteInstanceTemplate(projectID, templateName string) (*compute.Operation, error) {
+	instanceTemplateService := compute.NewInstanceTemplatesService(m.Service)
+
+	return instanceTemplateService.Delete(projectID, templateName).Do()
+}
+
+// ListInstanceTemplates lists all instance templates which satisfies filter condition
+// https://godoc.org/google.golang.org/api/compute/v1#InstanceTemplatesService.List
+func (m *Manager) ListInstanceTemplates(projectID, filter string) ([]*compute.InstanceTemplate, error) {
+	log.Debugf("ListInstanceTemplates: filter[%s]", filter)
+
+	instanceTemplateService := compute.NewInstanceTemplatesService(m.Service)
+
+	isContain := func(checked string) bool {
+		return strings.Contains(checked, filter)
+	}
+
+	tplList, err := instanceTemplateService.List(projectID).Do()
+	if err != nil {
+		return []*compute.InstanceTemplate{}, err
+	}
+
+	tpls := tplList.Items
+	result := []*compute.InstanceTemplate{}
+	for _, tpl := range tpls {
+		if isContain(tpl.Name) {
+			result = append(result, tpl)
+		}
+	}
 
 	return result, nil
+}
+
+// GetInstanceGroupManager
+// https://godoc.org/google.golang.org/api/compute/v1#InstanceGroupManagersService.Get
+func (m *Manager) GetInstanceGroupManager(projectID, zone, instanceGroupManagerName string) (
+	*compute.InstanceGroupManager, error) {
+
+	instanceGroupManagerService := compute.NewInstanceGroupManagersService(m.Service)
+
+	return instanceGroupManagerService.Get(projectID, zone, instanceGroupManagerName).Do()
+}
+
+// ListInstanceGroupManagers
+// https://godoc.org/google.golang.org/api/compute/v1#InstanceGroupManagersService.List
+func (m *Manager) ListInstanceGroupManagers(projectID, zone string) (
+	*compute.InstanceGroupManagerList, error) {
+
+	instanceGroupManagerService := compute.NewInstanceGroupManagersService(m.Service)
+
+	return instanceGroupManagerService.List(projectID, zone).Do()
+}
+
+// SetInstanceTemplate
+// https://godoc.org/google.golang.org/api/compute/v1#InstanceGroupManagersService.SetInstanceTemplate
+func (m *Manager) SetInstanceTemplate(projectID, zone, instanceGroupManager, instanceTemplate string) error {
+	instanceGroupManagerService := compute.NewInstanceGroupManagersService(m.Service)
+
+	templateRequest := &compute.InstanceGroupManagersSetInstanceTemplateRequest{
+		InstanceTemplate: instanceTemplate,
+	}
+	if _, err := instanceGroupManagerService.SetInstanceTemplate(
+		projectID, zone, instanceGroupManager, templateRequest).Do(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // InitVMFromTemplate builds the sample VM from template
@@ -452,9 +716,39 @@ func (m *Manager) InitVMFromTemplate(templateFile []byte, zone string) (*compute
 	if err != nil {
 		return nil, err
 	}
-	// :~)
 
 	return &vm, nil
+}
+
+// GetNatIP gets NAT IP address from VM
+func (m *Manager) GetNatIP(vm *compute.Instance) string {
+	if vm == nil {
+		return "missing"
+	}
+	natIP := vm.NetworkInterfaces[0].AccessConfigs[0].NatIP
+
+	log.Tracef("Got NatIP: VM[%s], ip[%s]", vm.Name, natIP)
+
+	return natIP
+}
+
+// GetNetworkIP gets internal IP address from VM
+func (m *Manager) GetNetworkIP(vm *compute.Instance) string {
+	if vm == nil {
+		return "missing"
+	}
+	networkIP := vm.NetworkInterfaces[0].NetworkIP
+
+	log.Tracef("Got NetworkIP: VM[%s], ip[%s]", vm.Name, networkIP)
+
+	return networkIP
+}
+
+// PatchInstanceMachineType replaces the last part of machineTypeURI with targetType
+func (m *Manager) PatchInstanceMachineType(machineTypeURI, targetType string) string {
+	split := strings.Split(machineTypeURI, "/")
+	split[len(split)-1] = targetType
+	return strings.Join(split, "/")
 }
 
 // ProbeVMRunning probes the VM status till its status is RUNNING or timeout
@@ -513,7 +807,7 @@ func (m *Manager) ProbeVMStopped(projectID, zone, vmName string, observer chan<-
 			continue
 		}
 
-		if createdInstance.Status != "TERMINATED" {
+		if createdInstance.Status != VMStatusTerminated {
 			log.Tracef("VM not yet Stopped: VM[%s]", vmName)
 			time.Sleep(10 * time.Second)
 
@@ -583,7 +877,7 @@ func (m *Manager) ProbeVmMachineTypeChanged(
 			continue
 		}
 
-		vmMachineType := utility.GetLastSplit(changedVm.MachineType, "/")
+		vmMachineType := gosak.GetLastSplit(changedVm.MachineType, "/")
 		if vmMachineType != machineType {
 			log.Tracef("VM machineType not yet changed: current[%s], target[%s]", vmMachineType, machineType)
 			time.Sleep(10 * time.Second)
@@ -599,42 +893,29 @@ func (m *Manager) ProbeVmMachineTypeChanged(
 	}
 }
 
-// GetNatIP gets NAT IP address from VM
-func (m *Manager) GetNatIP(vm *compute.Instance) string {
-	if vm == nil {
-		return "missing"
+// ProbeInstanceTemplateCreation
+func (m *Manager) ProbeInstanceTemplateCreation(projectID, templateName string, observer chan<- bool) {
+	startTime := time.Now()
+
+	for {
+		if time.Now().Sub(startTime) > InstanceTemplateCreationTimeout {
+			log.Warnf("InstanceTemplate creation Timeout: name[%s]", templateName)
+			observer <- false
+
+			break
+		}
+
+		template, err := m.GetInstanceTemplate(projectID, templateName)
+		if err != nil {
+			log.Tracef("InstanceTemplate not yet Created: name[%s]", templateName)
+			time.Sleep(10 * time.Second)
+
+			continue
+		}
+
+		log.Infof("InstanceTemplate Created!: name[%s]", template.Name)
+		observer <- true
+
+		break
 	}
-	natIP := vm.NetworkInterfaces[0].AccessConfigs[0].NatIP
-
-	log.Tracef("Got NatIP: VM[%s], ip[%s]", vm.Name, natIP)
-
-	return natIP
-}
-
-// GetNetworkIP gets internal IP address from VM
-func (m *Manager) GetNetworkIP(vm *compute.Instance) string {
-	if vm == nil {
-		return "missing"
-	}
-	networkIP := vm.NetworkInterfaces[0].NetworkIP
-
-	log.Tracef("Got NetworkIP: VM[%s], ip[%s]", vm.Name, networkIP)
-
-	return networkIP
-}
-
-// GetSnapshotOfDisk gets the snapshot name of the disk
-func (m *Manager) GetSnapshotOfDisk(disk *compute.Disk) string {
-	log.Tracef("Snapshot of the disk: snapshot[%s]", disk.SourceSnapshot)
-
-	arr := strings.Split(disk.SourceSnapshot, "/")
-
-	return arr[len(arr)-1]
-}
-
-// PatchInstanceMachineType replaces the last part of machineTypeURI with targetType
-func (m *Manager) PatchInstanceMachineType(machineTypeURI, targetType string) string {
-	split := strings.Split(machineTypeURI, "/")
-	split[len(split)-1] = targetType
-	return strings.Join(split, "/")
 }
