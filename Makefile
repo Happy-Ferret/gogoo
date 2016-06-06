@@ -33,6 +33,7 @@ deps: ## Install all dependencies
 	go get google.golang.org/api/storage/v1
 	go get google.golang.org/cloud
 	go get google.golang.org/cloud/datastore
+	go get github.com/iKala/gosak
 	# below is for test
 	go get github.com/stretchr/testify/suite
 	go get github.com/patrickmn/go-cache
