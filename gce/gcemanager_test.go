@@ -22,8 +22,8 @@ import (
 
 var tested Manager
 var projID string
-var zone string = "asia-east1-b"
-var region string = "asia-east1"
+var zone = "asia-east1-b"
+var region = "asia-east1"
 var vmName = "instance-test"
 var diskName = "disk-test"
 

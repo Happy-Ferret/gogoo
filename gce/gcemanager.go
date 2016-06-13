@@ -13,30 +13,29 @@ import (
 	"github.com/iKala/gosak"
 
 	log "github.com/cihub/seelog"
+	"github.com/pkg/errors"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"golang.org/x/oauth2/jwt"
-	compute "google.golang.org/api/compute/v1"
+	"google.golang.org/api/compute/v1"
 )
 
-func gceError(errMessage string) error {
-	return fmt.Errorf("GCE operation fails: %s", errMessage)
-}
-
 const (
-	// VMRunningTimeout is timeout of VM creation to running
-	VMRunningTimeout = 180 * time.Second
+	// VMCreationTimeout is timeout of VM creation to running
+	VMCreationTimeout = 180 * time.Second
 	// VMStoppingTimeout is timeout of VM running to stopped
 	VMStoppingTimeout = 180 * time.Second
 	// DiskCreationTimeout is timeout of disk creation
 	DiskCreationTimeout = 180 * time.Second
-	// VmSetMachineTypeTimeout is timeout of set machine type
-	VmSetMachineTypeTimeout = 180 * time.Second
+	// VMSetMachineTypeTimeout is timeout of set machine type
+	VMSetMachineTypeTimeout = 180 * time.Second
 	// InstanceTemplateCreationTimeout is timeout of creating instance template
 	InstanceTemplateCreationTimeout = 180 * time.Second
 
+	// VMStatusTerminated ...
 	VMStatusTerminated = "TERMINATED"
-	VMStatusRunning    = "RUNNING"
+	// VMStatusRunning ...
+	VMStatusRunning = "RUNNING"
 )
 
 // VMConditionChecker return a bool value by checking condition inside VM
@@ -75,13 +74,13 @@ type Manager struct {
 
 // NewVM creates a new VM.
 // This method blocks till the status of created VM to be RUNNING
-// or will be timeout if it takes over `VMRunningTimeout`.
+// or will be timeout if it takes over `VMCreationTimeout`.
 // https://godoc.org/google.golang.org/api/compute/v1#InstancesService.Insert
 func (m *Manager) NewVM(projectID, zone string, vm *compute.Instance) error {
 	log.Tracef("New VM: project[%s], zone[%s]", projectID, zone)
 
 	if _, err := m.Service.Instances.Insert(projectID, zone, vm).Do(); err != nil {
-		return gceError(err.Error())
+		return err
 	}
 
 	// Pooling the status of the created vm
@@ -90,7 +89,7 @@ func (m *Manager) NewVM(projectID, zone string, vm *compute.Instance) error {
 
 	done := <-vmRunningObserver
 	if !done {
-		return gceError(fmt.Sprintf("NewVM timeout: VM[%s]", vm.Name))
+		return errors.Errorf("NewVM timeout: VM[%s]", vm.Name)
 	}
 
 	return nil
@@ -103,7 +102,7 @@ func (m *Manager) GetVM(projectID, zone, vmName string) (*compute.Instance, erro
 
 	vm, err := m.Service.Instances.Get(projectID, zone, vmName).Do()
 	if err != nil {
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
 	return vm, nil
@@ -115,7 +114,7 @@ func (m *Manager) DeleteVM(projectID, zone, vmName string) error {
 	log.Tracef("Delete VM: project[%s], zone[%s], vmName[%s]", projectID, zone, vmName)
 
 	if _, err := m.Service.Instances.Delete(projectID, zone, vmName).Do(); err != nil {
-		return gceError(err.Error())
+		return err
 	}
 
 	return nil
@@ -129,15 +128,14 @@ func (m *Manager) StartVM(projectID, zone, vmName string, vcc VMConditionChecker
 
 	op, err := m.Service.Instances.Start(projectID, zone, vmName).Do()
 	if err != nil {
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
-	pass, err := vcc(projectID, zone, vmName)
-	if pass {
-		return op, nil
+	if _, err := vcc(projectID, zone, vmName); err != nil {
+		return nil, errors.Wrap(err, "VM condition checking fails")
 	}
 
-	return nil, err
+	return op, nil
 }
 
 // StopVM stops a VM.
@@ -148,37 +146,36 @@ func (m *Manager) StopVM(projectID, zone, vmName string, vcc VMConditionChecker)
 
 	op, err := m.Service.Instances.Stop(projectID, zone, vmName).Do()
 	if err != nil {
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
-	pass, err := vcc(projectID, zone, vmName)
-	if pass {
-		return op, nil
+	if _, err := vcc(projectID, zone, vmName); err != nil {
+		return nil, errors.Wrap(err, "VM condition checking fails")
 	}
 
-	return nil, err
+	return op, nil
 }
 
 // SetMachineType changes the machine type for a stopped instance to the machine type specified in the request.
 // https://godoc.org/google.golang.org/api/compute/v1#InstancesService.SetMachineType
-func (m *Manager) SetMachineType(projectId, zone, vmName, machineType string) error {
+func (m *Manager) SetMachineType(projectID, zone, vmName, machineType string) error {
 	log.Debugf("SetMachineType: project[%s], zone[%s], vmName[%s], type[%s]",
-		projectId, zone, vmName, machineType)
+		projectID, zone, vmName, machineType)
 
 	instanceService := compute.NewInstancesService(m.Service)
-	machineTypeUri := fmt.Sprintf("zones/%s/machineTypes/%s", zone, machineType)
-	request := compute.InstancesSetMachineTypeRequest{MachineType: machineTypeUri}
+	machineTypeURI := fmt.Sprintf("zones/%s/machineTypes/%s", zone, machineType)
+	request := compute.InstancesSetMachineTypeRequest{MachineType: machineTypeURI}
 
-	if _, err := instanceService.SetMachineType(projectId, zone, vmName, &request).Do(); err != nil {
+	if _, err := instanceService.SetMachineType(projectID, zone, vmName, &request).Do(); err != nil {
 		return err
 	}
 
 	vmMachineTypeChangingObserver := make(chan bool)
-	go m.ProbeVmMachineTypeChanged(projectId, zone, vmName, machineType, vmMachineTypeChangingObserver)
+	go m.ProbeVMMachineTypeChanged(projectID, zone, vmName, machineType, vmMachineTypeChangingObserver)
 
 	done := <-vmMachineTypeChangingObserver
 	if !done {
-		return gceError(fmt.Sprintf("SetMachineType timeout: VM[%s]", vmName))
+		return errors.Errorf("SetMachineType timeout: VM[%s]", vmName)
 	}
 
 	return nil
@@ -199,7 +196,7 @@ func (m *Manager) ListVMs(projectID, zone string) (*compute.InstanceList, error)
 
 	res, err := m.Service.Instances.List(projectID, zone).Do()
 	if err != nil {
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
 	return res, nil
@@ -215,7 +212,7 @@ func (m *Manager) ListVMsWithFilter(projectID, zone, filter string) (*compute.In
 		Do()
 
 	if err != nil {
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
 	return res, nil
@@ -228,7 +225,7 @@ func (m *Manager) ListImages(projectID string) (*compute.ImageList, error) {
 
 	res, err := m.Service.Images.List(projectID).Do()
 	if err != nil {
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
 	return res, nil
@@ -243,7 +240,7 @@ func (m *Manager) ListDisks(projectID, zone string) (*compute.DiskList, error) {
 
 	res, err := diskService.List(projectID, zone).Do()
 	if err != nil {
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
 	return res, nil
@@ -263,7 +260,7 @@ func (m *Manager) NewDisk(projectID, zone, name, sourceSnapshot string, sizeGb i
 		SourceSnapshot: sourceSnapshot}
 
 	if _, err := diskService.Insert(projectID, zone, disk).Do(); err != nil {
-		return gceError(err.Error())
+		return err
 	}
 
 	diskCreationObserver := make(chan bool)
@@ -271,7 +268,7 @@ func (m *Manager) NewDisk(projectID, zone, name, sourceSnapshot string, sizeGb i
 
 	done := <-diskCreationObserver
 	if !done {
-		return fmt.Errorf("NewDisk timeout: disk[%s]", name)
+		return errors.Errorf("NewDisk timeout: disk[%s]", name)
 	}
 
 	return nil
@@ -286,7 +283,7 @@ func (m *Manager) GetDisk(projectID, zone, diskName string) (*compute.Disk, erro
 
 	disk, err := diskService.Get(projectID, zone, diskName).Do()
 	if err != nil {
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
 	return disk, nil
@@ -300,7 +297,7 @@ func (m *Manager) DeleteDisk(projectID, zone, diskName string) error {
 	diskService := compute.NewDisksService(m.Service)
 
 	if _, err := diskService.Delete(projectID, zone, diskName).Do(); err != nil {
-		return gceError(err.Error())
+		return err
 	}
 
 	return nil
@@ -314,7 +311,7 @@ func (m *Manager) ListSnapshots(projectID string) ([]*compute.Snapshot, error) {
 	snapshotService := compute.NewSnapshotsService(m.Service)
 	result, err := snapshotService.List(projectID).Do()
 	if err != nil {
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
 	snapshots := result.Items
@@ -334,7 +331,7 @@ func (m *Manager) GetSnapshot(projectID, snapshot string) (*compute.Snapshot, er
 
 	result, err := snapshotService.Get(projectID, snapshot).Do()
 	if err != nil {
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
 	return result, nil
@@ -385,7 +382,7 @@ func (m *Manager) setTags(
 
 	op, err := m.Service.Instances.SetTags(projectID, zone, vmName, vm.Tags).Do()
 	if err != nil {
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
 	return op, nil
@@ -423,8 +420,7 @@ func (m *Manager) DetachTags(projectID, zone, vmName string, removedTages []stri
 	return m.setTags(projectID, zone, vmName, removedTages, detacher)
 }
 
-// GetInstanceGroup
-// https://godoc.org/google.golang.org/api/compute/v1#InstanceGroupsService.Get
+// GetInstanceGroup - https://godoc.org/google.golang.org/api/compute/v1#InstanceGroupsService.Get
 func (m *Manager) GetInstanceGroup(projectID, zone, instanceGroupName string) (
 	*compute.InstanceGroup, error) {
 
@@ -480,7 +476,7 @@ func (m *Manager) AddInstancesIntoInstanceGroup(
 
 	op, err := instanceGroupService.AddInstances(projectID, zone, instanceGroupName, &request).Do()
 	if err != nil {
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
 	return op, nil
@@ -507,7 +503,7 @@ func (m *Manager) RemoveInstancesIntoInstanceGroup(
 
 	op, err := instanceGroupService.RemoveInstances(projectID, zone, instanceGroupName, &request).Do()
 	if err != nil {
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
 	return op, nil
@@ -536,8 +532,7 @@ func (m *Manager) ListInstanceGroupsByZone(projectID, zone string, isPrefix func
 	return result
 }
 
-// GetTargetPool
-// https://godoc.org/google.golang.org/api/compute/v1#TargetPoolsService.Get
+// GetTargetPool - https://godoc.org/google.golang.org/api/compute/v1#TargetPoolsService.Get
 func (m *Manager) GetTargetPool(projectID, region, targetPool string) (*compute.TargetPool, error) {
 	log.Tracef("GetTargetPool: project[%s], region[%s], targetPool[%s]",
 		projectID, region, targetPool)
@@ -565,9 +560,7 @@ func (m *Manager) AddInstancesIntoTargetPool(
 
 	op, err := srv.AddInstance(projectID, region, targetPool, &request).Do()
 	if err != nil {
-		log.Warnf("Error: %s", err.Error())
-
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
 	return op, nil
@@ -592,15 +585,13 @@ func (m *Manager) RemoveInstancesFromTargetPool(
 
 	op, err := srv.RemoveInstance(projectID, region, targetPool, &request).Do()
 	if err != nil {
-		log.Warnf("Error: %s", err.Error())
-
-		return nil, gceError(err.Error())
+		return nil, err
 	}
 
 	return op, nil
 }
 
-// GetInstanceTemplate
+// GetInstanceTemplate ...
 // https://godoc.org/google.golang.org/api/compute/v1#InstanceTemplatesService.Get
 func (m *Manager) GetInstanceTemplate(projectID, templateName string) (*compute.InstanceTemplate, error) {
 	instanceTemplateService := compute.NewInstanceTemplatesService(m.Service)
@@ -608,7 +599,7 @@ func (m *Manager) GetInstanceTemplate(projectID, templateName string) (*compute.
 	return instanceTemplateService.Get(projectID, templateName).Do()
 }
 
-// NewInstanceTemplate
+// NewInstanceTemplate ...
 // https://godoc.org/google.golang.org/api/compute/v1#InstanceTemplatesService.Insert
 func (m *Manager) NewInstanceTemplate(projectID string, template *compute.InstanceTemplate) error {
 	instanceTemplateService := compute.NewInstanceTemplatesService(m.Service)
@@ -629,7 +620,7 @@ func (m *Manager) NewInstanceTemplate(projectID string, template *compute.Instan
 	return nil
 }
 
-// DeleteInstanceTemplate
+// DeleteInstanceTemplate ...
 // https://godoc.org/google.golang.org/api/compute/v1#InstanceTemplatesService.Delete
 func (m *Manager) DeleteInstanceTemplate(projectID, templateName string) (*compute.Operation, error) {
 	instanceTemplateService := compute.NewInstanceTemplatesService(m.Service)
@@ -664,7 +655,7 @@ func (m *Manager) ListInstanceTemplates(projectID, filter string) ([]*compute.In
 	return result, nil
 }
 
-// GetInstanceGroupManager
+// GetInstanceGroupManager ...
 // https://godoc.org/google.golang.org/api/compute/v1#InstanceGroupManagersService.Get
 func (m *Manager) GetInstanceGroupManager(projectID, zone, instanceGroupManagerName string) (
 	*compute.InstanceGroupManager, error) {
@@ -674,7 +665,7 @@ func (m *Manager) GetInstanceGroupManager(projectID, zone, instanceGroupManagerN
 	return instanceGroupManagerService.Get(projectID, zone, instanceGroupManagerName).Do()
 }
 
-// ListInstanceGroupManagers
+// ListInstanceGroupManagers ...
 // https://godoc.org/google.golang.org/api/compute/v1#InstanceGroupManagersService.List
 func (m *Manager) ListInstanceGroupManagers(projectID, zone string) (
 	*compute.InstanceGroupManagerList, error) {
@@ -684,7 +675,7 @@ func (m *Manager) ListInstanceGroupManagers(projectID, zone string) (
 	return instanceGroupManagerService.List(projectID, zone).Do()
 }
 
-// SetInstanceTemplate
+// SetInstanceTemplate ...
 // https://godoc.org/google.golang.org/api/compute/v1#InstanceGroupManagersService.SetInstanceTemplate
 func (m *Manager) SetInstanceTemplate(projectID, zone, instanceGroupManager, instanceTemplate string) error {
 	instanceGroupManagerService := compute.NewInstanceGroupManagersService(m.Service)
@@ -756,7 +747,7 @@ func (m *Manager) ProbeVMRunning(projectID, zone, vmName string, observer chan<-
 	startTime := time.Now()
 
 	for {
-		if time.Now().Sub(startTime) > VMRunningTimeout {
+		if time.Now().Sub(startTime) > VMCreationTimeout {
 			log.Warnf("VM creation Timeout: VM[%s]", vmName)
 			observer <- false
 
@@ -854,21 +845,21 @@ func (m *Manager) ProbeDiskCreation(projectID, zone, diskName string, observer c
 	}
 }
 
-// ProbeVmMachineTypeChanged probes if the machineType of VM has been changed
-func (m *Manager) ProbeVmMachineTypeChanged(
-	projectId, zone, vmName, machineType string, observer chan<- bool) {
+// ProbeVMMachineTypeChanged probes if the machineType of VM has been changed
+func (m *Manager) ProbeVMMachineTypeChanged(
+	projectID, zone, vmName, machineType string, observer chan<- bool) {
 
 	startTime := time.Now()
 
 	for {
-		if time.Now().Sub(startTime) > VmSetMachineTypeTimeout {
+		if time.Now().Sub(startTime) > VMSetMachineTypeTimeout {
 			log.Warnf("VM setMachineType Timeout: VM[%s]", vmName)
 			observer <- false
 
 			break
 		}
 
-		changedVm, err := m.GetVM(projectId, zone, vmName)
+		changedVM, err := m.GetVM(projectID, zone, vmName)
 
 		if err != nil {
 			log.Tracef("VM not yet Existed: VM[%s]", vmName)
@@ -877,7 +868,7 @@ func (m *Manager) ProbeVmMachineTypeChanged(
 			continue
 		}
 
-		vmMachineType := gosak.GetLastSplit(changedVm.MachineType, "/")
+		vmMachineType := gosak.GetLastSplit(changedVM.MachineType, "/")
 		if vmMachineType != machineType {
 			log.Tracef("VM machineType not yet changed: current[%s], target[%s]", vmMachineType, machineType)
 			time.Sleep(10 * time.Second)
@@ -893,7 +884,7 @@ func (m *Manager) ProbeVmMachineTypeChanged(
 	}
 }
 
-// ProbeInstanceTemplateCreation
+// ProbeInstanceTemplateCreation ...
 func (m *Manager) ProbeInstanceTemplateCreation(projectID, templateName string, observer chan<- bool) {
 	startTime := time.Now()
 
