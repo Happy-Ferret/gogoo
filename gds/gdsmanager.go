@@ -2,19 +2,16 @@
 package gds
 
 import (
-	"fmt"
 	"reflect"
 
 	log "github.com/cihub/seelog"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2/google"
 	"golang.org/x/oauth2/jwt"
 	"google.golang.org/cloud"
 	"google.golang.org/cloud/datastore"
 )
-
-// ErrGDS represents error fo google datastore
-var ErrGDS = fmt.Errorf("GDS Error")
 
 // BuildGdsContext builds the singlton context for Manager
 func BuildGdsContext(serviceEmail string, key []byte, projectID string) (context.Context, *datastore.Client, error) {
@@ -55,8 +52,6 @@ func (m *Manager) BuildKey(kind, keyName string) *datastore.Key {
 
 // Put inserts/updates the entity
 func (m *Manager) Put(key *datastore.Key, entity interface{}) (*datastore.Key, error) {
-	log.Tracef("Put entity: key[%s]", key.Name())
-
 	var resultKey *datastore.Key
 	key, err := m.Client.Put(context.Background(), key, entity)
 	if err != nil {
@@ -80,17 +75,16 @@ func (m *Manager) PutUnique(key *datastore.Key, entity interface{}) error {
 	tx := m.GetTx()
 
 	if err := tx.Get(key, entity); err == nil {
-		return fmt.Errorf("Unique condition violation")
+		return errors.New("entity existed, unique condition violation!!")
 	}
 
 	_, err := tx.Put(key, entity)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "put fails")
 	}
 
 	if _, err := tx.Commit(); err != nil {
-		log.Warnf("%s", err.Error())
-		return err
+		return errors.Wrap(err, "commit fails")
 	}
 
 	return nil
@@ -102,9 +96,7 @@ func (m *Manager) Get(key *datastore.Key, entity interface{}) error {
 
 	err := m.Client.Get(context.Background(), key, entity)
 	if err != nil {
-		log.Tracef("Error: %s: kind[%s], key[%s]", err.Error(), key.Kind(), key.Name())
-
-		return ErrGDS
+		return errors.Wrapf(err, "kind[%s], key[%s]", key.Kind(), key.Name())
 	}
 
 	// Use reflection to setup key of entity
@@ -120,9 +112,7 @@ func (m *Manager) Get(key *datastore.Key, entity interface{}) error {
 func (m *Manager) GetMulti(keys []*datastore.Key, dst interface{}) error {
 	err := m.Client.GetMulti(context.Background(), keys, dst)
 	if err != nil {
-		log.Tracef("Error: %s", err.Error())
-
-		return ErrGDS
+		return err
 	}
 
 	return nil
@@ -145,16 +135,12 @@ func (m *Manager) GetKeysOnly(query *datastore.Query) ([]*datastore.Key, error) 
 // Delete deletes the entity by key (if the entity is not existed, there is no error)
 func (m *Manager) Delete(key *datastore.Key) error {
 	if key == nil {
-		return fmt.Errorf("key is nil")
+		return errors.New("Key cann't be null")
 	}
-
-	log.Tracef("Delete entity: key[%s]", key.Name())
 
 	err := m.Client.Delete(context.Background(), key)
 	if err != nil {
-		log.Tracef("Error: %s", err.Error())
-
-		return ErrGDS
+		return err
 	}
 
 	return nil
@@ -166,9 +152,7 @@ func (m *Manager) GetAll(query *datastore.Query, result interface{}) ([]*datasto
 
 	keys, err := m.Client.GetAll(context.Background(), query, result)
 	if err != nil {
-		log.Warnf("Error: %s", err.Error())
-
-		return nil, ErrGDS
+		return nil, err
 	}
 
 	// Use reflection to setup keys of entities
@@ -189,9 +173,7 @@ func (m *Manager) GetCount(query *datastore.Query) (int, error) {
 
 	count, err := m.Client.Count(context.Background(), query)
 	if err != nil {
-		log.Warnf("Error: %s", err.Error())
-
-		return 0, ErrGDS
+		return 0, err
 	}
 
 	return count, nil
@@ -208,13 +190,13 @@ func (m *Manager) DeleteAll(kindName string) error {
 
 	keys, err := m.GetAll(query, result)
 	if err != nil {
-		return ErrGDS
+		return err
 	}
 
 	for _, key := range keys {
 		err = m.Delete(key)
 		if err != nil {
-			return ErrGDS
+			log.Warnf("Delete fails: key[%s]", key.Name())
 		}
 	}
 
