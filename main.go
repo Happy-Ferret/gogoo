@@ -12,6 +12,7 @@ import (
 	"github.com/iKala/gogoo/replicapoolupdater"
 	"github.com/iKala/gogoo/storage"
 
+	"github.com/cihub/seelog"
 	"github.com/facebookgo/inject"
 )
 
@@ -47,6 +48,10 @@ func New(ctx AppContext) GoGoo {
 	buildDependencyGraph(ctx)
 
 	return gogoo
+}
+
+func (g GoGoo) SetLogger(l seelog.LoggerInterface) {
+	seelog.ReplaceLogger(l)
 }
 
 // Construct dependency graph
