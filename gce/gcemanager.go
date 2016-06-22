@@ -111,7 +111,7 @@ func (m *Manager) GetVM(projectID, zone, vmName string) (*compute.Instance, erro
 // DeleteVM deletes a VM.
 // https://godoc.org/google.golang.org/api/compute/v1#InstancesService.Delete
 func (m *Manager) DeleteVM(projectID, zone, vmName string) error {
-	log.Tracef("Delete VM: project[%s], zone[%s], vmName[%s]", projectID, zone, vmName)
+	log.Debugf("Delete VM: project[%s], zone[%s], vmName[%s]", projectID, zone, vmName)
 
 	if _, err := m.Service.Instances.Delete(projectID, zone, vmName).Do(); err != nil {
 		return err
