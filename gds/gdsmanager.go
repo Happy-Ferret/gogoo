@@ -3,6 +3,7 @@ package gds
 
 import (
 	"reflect"
+	"sync"
 
 	log "github.com/cihub/seelog"
 	"github.com/pkg/errors"
@@ -13,24 +14,8 @@ import (
 	"google.golang.org/cloud/datastore"
 )
 
-// BuildGdsContext builds the singlton context for Manager
-func BuildGdsContext(serviceEmail string, key []byte, projectID string) (context.Context, *datastore.Client, error) {
-	conf := &jwt.Config{
-		Email:      serviceEmail,
-		PrivateKey: key,
-		Scopes: []string{
-			datastore.ScopeDatastore,
-		},
-		TokenURL: google.JWTTokenURL,
-	}
-
-	ctx := context.Background()
-	client, err := datastore.NewClient(ctx, projectID, cloud.WithTokenSource(conf.TokenSource(ctx)))
-	if err != nil {
-		return ctx, nil, err
-	}
-
-	return ctx, client, nil
+type Cloneable interface {
+	Clone() interface{}
 }
 
 // Manager is for low level communication with Google datastore
@@ -136,7 +121,7 @@ func (m *Manager) GetKeysOnly(query *datastore.Query) ([]*datastore.Key, error) 
 func (m *Manager) Iterate(
 	query *datastore.Query,
 	cursorStr string,
-	dst interface{},
+	dst Cloneable,
 	op func(key *datastore.Key, dst interface{})) (string, error) {
 
 	if cursorStr != "" {
@@ -147,15 +132,35 @@ func (m *Manager) Iterate(
 		query = query.Start(cursor)
 	}
 
+	type Entity struct {
+		Key *datastore.Key
+		Dst interface{}
+	}
+
+	entityArr := []Entity{}
+
 	it := m.Client.Run(context.Background(), query)
 	key, err := it.Next(dst)
 	for err == nil {
-		op(key, dst)
+		entityArr = append(entityArr, Entity{key, dst.Clone()})
 		key, err = it.Next(dst)
 	}
 	if err != datastore.Done {
 		return "", errors.Errorf("Failed fetching results: %v", err)
 	}
+
+	var wg sync.WaitGroup
+	for _, en := range entityArr {
+		wg.Add(1)
+		go func(key *datastore.Key, dst interface{}, wg *sync.WaitGroup) {
+			if wg != nil {
+				defer wg.Done()
+			}
+
+			op(key, dst)
+		}(en.Key, en.Dst, &wg)
+	}
+	wg.Wait()
 
 	nextCursor, err := it.Cursor()
 	if err != nil {
@@ -169,11 +174,12 @@ func (m *Manager) Iterate(
 func (m *Manager) BatchIterate(
 	query *datastore.Query,
 	batchSize int,
-	dst interface{},
+	dst Cloneable,
 	op func(key *datastore.Key, dst interface{})) error {
 
 	query = query.Limit(batchSize)
 	cursor := ""
+	count := 0
 	for {
 		nxt, err := m.Iterate(query, cursor, dst, op)
 		if err != nil {
@@ -182,6 +188,8 @@ func (m *Manager) BatchIterate(
 		if cursor == nxt {
 			break
 		}
+		count += batchSize
+		log.Debugf("processed: count[%d]", count)
 		cursor = nxt
 	}
 
@@ -263,4 +271,24 @@ func (m *Manager) DeleteAll(kindName string) error {
 func (m *Manager) GetTx() *datastore.Transaction {
 	tx, _ := m.Client.NewTransaction(context.Background())
 	return tx
+}
+
+// BuildGdsContext builds the singlton context for Manager
+func BuildGdsContext(serviceEmail string, key []byte, projectID string) (context.Context, *datastore.Client, error) {
+	conf := &jwt.Config{
+		Email:      serviceEmail,
+		PrivateKey: key,
+		Scopes: []string{
+			datastore.ScopeDatastore,
+		},
+		TokenURL: google.JWTTokenURL,
+	}
+
+	ctx := context.Background()
+	client, err := datastore.NewClient(ctx, projectID, cloud.WithTokenSource(conf.TokenSource(ctx)))
+	if err != nil {
+		return ctx, nil, err
+	}
+
+	return ctx, client, nil
 }

@@ -31,6 +31,10 @@ type Article struct {
 	PublishedAt time.Time      `datastore:"publish_at"`
 }
 
+func (a *Article) Clone() interface{} {
+	return *a
+}
+
 func TestGdsManagerTestSuite(t *testing.T) {
 	suite.Run(t, new(GdsManagerTestSuite))
 }
@@ -201,9 +205,9 @@ func (suite *GdsManagerTestSuite) Test_GetCount() {
 func (suite *GdsManagerTestSuite) Test_Iterate() {
 	// change number to 20
 	op := func(key *datastore.Key, dst interface{}) {
-		a := dst.(*Article)
+		a := dst.(Article)
 		a.Number = 20
-		if _, err := tested.Put(key, a); err != nil {
+		if _, err := tested.Put(key, &a); err != nil {
 			log.Printf("err:%s", err)
 		}
 	}
@@ -222,7 +226,7 @@ func (suite *GdsManagerTestSuite) Test_Iterate() {
 
 func (suite *GdsManagerTestSuite) Test_BatchIterate() {
 	op := func(key *datastore.Key, dst interface{}) {
-		a := dst.(*Article)
+		a := dst.(Article)
 		log.Printf("a: %+v", a)
 	}
 
