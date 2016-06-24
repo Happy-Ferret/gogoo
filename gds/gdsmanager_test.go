@@ -198,6 +198,38 @@ func (suite *GdsManagerTestSuite) Test_GetCount() {
 	assert.Equal(suite.T(), 2, count)
 }
 
+func (suite *GdsManagerTestSuite) Test_Iterate() {
+	// change number to 20
+	op := func(key *datastore.Key, dst interface{}) {
+		a := dst.(*Article)
+		a.Number = 20
+		if _, err := tested.Put(key, a); err != nil {
+			log.Printf("err:%s", err)
+		}
+	}
+
+	query := datastore.NewQuery(TestKind)
+	tested.Iterate(query, "", &Article{}, op)
+
+	// asset all articles have been changed
+	result := &[]*Article{}
+	tested.GetAll(query, result)
+	articles := *result
+	assert.Equal(suite.T(), 2, len(articles))
+	assert.Equal(suite.T(), 20, articles[0].Number)
+	assert.Equal(suite.T(), 20, articles[1].Number)
+}
+
+func (suite *GdsManagerTestSuite) Test_BatchIterate() {
+	op := func(key *datastore.Key, dst interface{}) {
+		a := dst.(*Article)
+		log.Printf("a: %+v", a)
+	}
+
+	query := datastore.NewQuery(TestKind)
+	tested.BatchIterate(query, 1, &Article{}, op)
+}
+
 func (suite *GdsManagerTestSuite) Test_Delete() {
 	// prepare
 	newKey := datastore.NewKey(context.Background(), TestKind, "instance-z", 0, nil)

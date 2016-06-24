@@ -132,6 +132,62 @@ func (m *Manager) GetKeysOnly(query *datastore.Query) ([]*datastore.Key, error) 
 	return keys, nil
 }
 
+// Iterate iterates one by one to the query result
+func (m *Manager) Iterate(
+	query *datastore.Query,
+	cursorStr string,
+	dst interface{},
+	op func(key *datastore.Key, dst interface{})) (string, error) {
+
+	if cursorStr != "" {
+		cursor, err := datastore.DecodeCursor(cursorStr)
+		if err != nil {
+			return "", errors.Errorf("Bad cursor %q: %v", cursorStr, err)
+		}
+		query = query.Start(cursor)
+	}
+
+	it := m.Client.Run(context.Background(), query)
+	key, err := it.Next(dst)
+	for err == nil {
+		op(key, dst)
+		key, err = it.Next(dst)
+	}
+	if err != datastore.Done {
+		return "", errors.Errorf("Failed fetching results: %v", err)
+	}
+
+	nextCursor, err := it.Cursor()
+	if err != nil {
+		return "", errors.Errorf("Failed fetching cursor: %v", err)
+	}
+
+	return nextCursor.String(), nil
+}
+
+// Batch iterates the query result with customized step
+func (m *Manager) BatchIterate(
+	query *datastore.Query,
+	batchSize int,
+	dst interface{},
+	op func(key *datastore.Key, dst interface{})) error {
+
+	query = query.Limit(batchSize)
+	cursor := ""
+	for {
+		nxt, err := m.Iterate(query, cursor, dst, op)
+		if err != nil {
+			return err
+		}
+		if cursor == nxt {
+			break
+		}
+		cursor = nxt
+	}
+
+	return nil
+}
+
 // Delete deletes the entity by key (if the entity is not existed, there is no error)
 func (m *Manager) Delete(key *datastore.Key) error {
 	if key == nil {
