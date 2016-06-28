@@ -1,11 +1,21 @@
-.PHONY: asset deps install test
+.PHONY: asset deps restore install test
 .DEFAULT_GOAL := help
 
 asset: ## Rebuild the asset files (config, template, secrect, etc...)
 	rm -rf config/asset.go
-	esc -o config/asset.go -pkg config config/
+	esc -o config/asset.go -pkg config -ignore="DS_Store|.*.go" config/
 
-install: asset ## Install the app
+deps: ## Pack the app dependencies
+	rm -rf Godeps/
+	rm -rf vendor/
+	godep save github.com/iKala/gogoo
+
+restore: ## Restore the app dependencies
+	go get github.com/tools/godep
+	go get github.com/mjibson/esc
+	godep restore
+
+install: asset deps ## Install the app
 	go install ./...
 
 test: asset ## Run all test
@@ -16,29 +26,29 @@ test: asset ## Run all test
 	go test ./pubsub
 	go test ./storage
 
-deps: ## Install all dependencies
-	go get github.com/cihub/seelog
-	go get github.com/facebookgo/inject
-	go get github.com/iKala/gosak
-	go get github.com/mjibson/esc
-	go get github.com/pkg/errors
-	go get golang.org/x/net/context
-	go get golang.org/x/oauth2
-	go get golang.org/x/oauth2/google
-	go get golang.org/x/oauth2/jwt
-	go get google.golang.org/api/cloudmonitoring/v2beta2
-	go get google.golang.org/api/compute/v1
-	go get google.golang.org/api/monitoring/v3
-	go get google.golang.org/api/pubsub/v1
-	go get google.golang.org/api/replicapoolupdater/v1beta1
-	go get google.golang.org/api/sqladmin/v1beta4
-	go get google.golang.org/api/storage/v1
-	go get google.golang.org/cloud
-	go get google.golang.org/cloud/datastore
-	# below is for test
-	go get github.com/stretchr/testify/suite
-	go get github.com/patrickmn/go-cache
-	go get github.com/satori/go.uuid
+# deps: ## Install all dependencies
+# 	go get github.com/cihub/seelog
+# 	go get github.com/facebookgo/inject
+# 	go get github.com/iKala/gosak
+# 	go get github.com/mjibson/esc
+# 	go get github.com/pkg/errors
+# 	go get golang.org/x/net/context
+# 	go get golang.org/x/oauth2
+# 	go get golang.org/x/oauth2/google
+# 	go get golang.org/x/oauth2/jwt
+# 	go get google.golang.org/api/cloudmonitoring/v2beta2
+# 	go get google.golang.org/api/compute/v1
+# 	go get google.golang.org/api/monitoring/v3
+# 	go get google.golang.org/api/pubsub/v1
+# 	go get google.golang.org/api/replicapoolupdater/v1beta1
+# 	go get google.golang.org/api/sqladmin/v1beta4
+# 	go get google.golang.org/api/storage/v1
+# 	go get google.golang.org/cloud
+# 	go get google.golang.org/cloud/datastore
+# 	# below is for test
+# 	go get github.com/stretchr/testify/suite
+# 	go get github.com/patrickmn/go-cache
+# 	go get github.com/satori/go.uuid
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'

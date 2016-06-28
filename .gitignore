@@ -1,6 +1,7 @@
 *.gz
 *.pem
 tags
+vendor
 config/asset.go
 config/config.json
 config/instance_template.json

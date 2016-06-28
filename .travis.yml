@@ -4,7 +4,7 @@ go:
   - tip
 
 install:
-  make deps
+  make restore
 
 script:
   make install
