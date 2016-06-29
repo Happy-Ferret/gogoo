@@ -11,9 +11,10 @@ import (
 	"time"
 
 	"github.com/iKala/gogoo/config"
+	"github.com/iKala/gosak/collectionutil"
+	"github.com/iKala/gosak/formatutil"
 
 	"github.com/facebookgo/inject"
-	"github.com/iKala/gosak"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -186,8 +187,8 @@ func (suite *GceManagerTestSuite) Test_GetNatIP() {
 	natIP := tested.GetNatIP(vm)
 	networkIP := tested.GetNetworkIP(vm)
 
-	assert.True(suite.T(), gosak.IsIP(natIP))
-	assert.True(suite.T(), gosak.IsIP(networkIP))
+	assert.True(suite.T(), formatutil.IsIP(natIP))
+	assert.True(suite.T(), formatutil.IsIP(networkIP))
 }
 
 func (suite *GceManagerTestSuite) Test_ListSnapshots() {
@@ -235,8 +236,8 @@ func (suite *GceManagerTestSuite) Test_AttachTagsThenDetachTags() {
 
 	vm, _ = tested.GetVM(projID, zone, vmName)
 	assert.Equal(suite.T(), 2, len(vm.Tags.Items))
-	assert.True(suite.T(), gosak.InStringSlice(vm.Tags.Items, "tag1"))
-	assert.True(suite.T(), gosak.InStringSlice(vm.Tags.Items, "tag2"))
+	assert.True(suite.T(), collectionutil.InStringSlice(vm.Tags.Items, "tag1"))
+	assert.True(suite.T(), collectionutil.InStringSlice(vm.Tags.Items, "tag2"))
 
 	// Detach tags
 	tested.DetachTags(projID, zone, vmName, []string{"tag2"})

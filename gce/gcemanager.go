@@ -10,7 +10,8 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/iKala/gosak"
+	"github.com/iKala/gosak/collectionutil"
+	"github.com/iKala/gosak/formatutil"
 
 	log "github.com/cihub/seelog"
 	"github.com/pkg/errors"
@@ -409,7 +410,7 @@ func (m *Manager) DetachTags(projectID, zone, vmName string, removedTages []stri
 	detacher := func(src, remove []string) []string {
 		result := []string{}
 		for _, s := range src {
-			if gosak.InStringSlice(remove, s) {
+			if collectionutil.InStringSlice(remove, s) {
 				continue
 			}
 			result = append(result, s)
@@ -868,7 +869,7 @@ func (m *Manager) ProbeVMMachineTypeChanged(
 			continue
 		}
 
-		vmMachineType := gosak.GetLastSplit(changedVM.MachineType, "/")
+		vmMachineType := formatutil.GetLastSplit(changedVM.MachineType, "/")
 		if vmMachineType != machineType {
 			log.Tracef("VM machineType not yet changed: current[%s], target[%s]", vmMachineType, machineType)
 			time.Sleep(10 * time.Second)

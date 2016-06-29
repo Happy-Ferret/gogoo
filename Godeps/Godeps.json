@@ -7,10 +7,6 @@
 	],
 	"Deps": [
 		{
-			"ImportPath": "github.com/bluele/slack",
-			"Rev": "5ad82ac42481ca5de6d34e3bcb5de21c0db965c7"
-		},
-		{
 			"ImportPath": "github.com/cihub/seelog",
 			"Comment": "v2.6-22-g752ef64",
 			"Rev": "752ef646ce438bc649b2bb565188471879185c33"
@@ -40,8 +36,12 @@
 			"Rev": "0c1f6d65b5a189c2250d10e71a5506f06f9fa0a0"
 		},
 		{
-			"ImportPath": "github.com/iKala/gosak",
-			"Rev": "6e150a7eb2cb76c74d54ff0d865a98752c348949"
+			"ImportPath": "github.com/iKala/gosak/collectionutil",
+			"Rev": "6369431100a9eedccf4bfa845956e6f96d900b50"
+		},
+		{
+			"ImportPath": "github.com/iKala/gosak/formatutil",
+			"Rev": "6369431100a9eedccf4bfa845956e6f96d900b50"
 		},
 		{
 			"ImportPath": "github.com/pkg/errors",
