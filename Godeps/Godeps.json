@@ -37,11 +37,11 @@
 		},
 		{
 			"ImportPath": "github.com/iKala/gosak/collectionutil",
-			"Rev": "86b7eba8077001368833682d3b05f0feeb9c2875"
+			"Rev": "efdc6a61e8a3284a60c68e59490db7e0ef67a01e"
 		},
 		{
 			"ImportPath": "github.com/iKala/gosak/formatutil",
-			"Rev": "86b7eba8077001368833682d3b05f0feeb9c2875"
+			"Rev": "efdc6a61e8a3284a60c68e59490db7e0ef67a01e"
 		},
 		{
 			"ImportPath": "github.com/pkg/errors",
